@@ -1,5 +1,5 @@
 # README
-The aim of the script is to import an S3 bucket and its files as Atlan assets, then based on file names, creates the lineage from each source table to the corresponding S3 file and from each s3 file to the corresponding snowflake table.
+The aim of this script is to import an S3 bucket and its files as Atlan assets, then based on file names, creates the lineage from each source table to the corresponding S3 file and from each s3 file to the corresponding snowflake table.
 if new tables or files are added to any connection, the script will import them automatically and build lineage based on object names.
 
 main.py is for local executions.
