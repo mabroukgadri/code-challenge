@@ -2,7 +2,8 @@
 main.py is for local executions.
 lambda_handler.py is to deploy to AWS lambda along with the pyatlan and boto3 libraries.
 
-The entry point of the script is the `lambda_handler` function
+The entry point of the script is the `lambda_handler` function.
+
 Based on the requested operation in the request payload, it will perform different actions on an Atlan instance.
 
 The main operations are:
@@ -26,7 +27,7 @@ Possible improvements:
 
 # Prerequistes to run the code
 - generate an atlan api key
-- create the follwing environment variables
+- create the following environment variables
     - ATLAN_BASE_URL='https://instance-name.atlan.com'
     - ATLAN_API_KEY='xxxxxxxxxxxxxxx'
 - for local executions configure aws cli with credentials that can access s3
