@@ -1,14 +1,17 @@
 # README
-main.py is for local executions.
-lambda_handler.py is to deploy to AWS lambda along with the pyatlan and boto3 libraries.
+This scipt imports an S3 bucket and its files as Atlan assets, then based on file names, creates the lineage from the each source table to the corresponding S3 file and from each s3 file to the corresponding snowflake table.
+if there new tables or files are added to any connection, the script will import them automatically and build lineage based on object names.
 
-The entry point of the script is the `lambda_handler` function.
+main.py is for local executions.
+lambda_handler.py is deployed to the Lambda service in my AWS personal account along with the pyatlan and boto3 libraries.
+
+The entry point of both scripts is the `lambda_handler` function.
 
 Based on the requested operation in the request payload, it will perform different actions on an Atlan instance.
 
 The main operations are:
 - create the s3 connection
-- create the s3 assets and lineage.
+- create the s3 assets and lineage. (the goal of this challenge)
 The other operations are:
 - retreive assets by guid or qualified name
 - purge assets
@@ -16,8 +19,8 @@ The other operations are:
 The Connection qualified name is a mandatory input for the s3 connection creation operation. The goal is to avoid creating redundant connections having the same name on the Atlan instance.
 
 Possible improvements:
-- add mock metadata to the assets
-- follow the openAPI standard and create a separate endpoint for each operation
+- add mock metadata to the assets like tags and terms.
+- follow the openAPI standard and create a separate endpoint for each operation in this script.
 - use an input validation library like pydantic instead of the `validate_parameters` function
 - use type hints
 - add unit tests
@@ -25,7 +28,7 @@ Possible improvements:
 - use secret manager to store the api key on AWS
 - automate the lambda function and scheduling deployment using terraform
 
-# Prerequistes to run the code
+# How to run the code
 - generate an atlan api key
 - create the following environment variables
     - ATLAN_BASE_URL='https://instance-name.atlan.com'
@@ -33,7 +36,8 @@ Possible improvements:
 - for local executions configure aws cli with credentials that can access s3
 - install python dependencies from requirements.txt
 - run main.py after adapting the code at the end with the request type to be passed to the lambda_handler function
-
+- execute with the upsert_s3_connection_request payload first (done only once)
+- execute with upsert_s3_assets_and_lineage payload to import the s3 objects and create the missing lineage
 
 # Examples of all the supported requests
 ```python
@@ -44,6 +48,7 @@ upsert_s3_connection_request = {
     }
 }
 
+# this is the payload requested in the challenge
 upsert_s3_assets_and_lineage_request = {
     "operation": "upsert_s3_assets_and_lineage",
     "params": {
@@ -91,7 +96,7 @@ purge_request = {
 
 # print(
 #     json.dumps(
-#         lambda_handler(purge_request, None),
+#         lambda_handler(upsert_s3_assets_and_lineage_request, None),
 #         indent=4,
 #     )
 # )
