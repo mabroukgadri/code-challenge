@@ -12,6 +12,7 @@ Based on the requested operation in the request payload, it will perform differe
 The main operations are:
 - create the s3 connection
 - create the s3 assets and lineage. (the goal of this challenge)
+
 The other operations are:
 - retreive assets by guid or qualified name
 - purge assets
