@@ -2,8 +2,8 @@
 The aim of this script is to import an S3 bucket and its files as Atlan assets, then based on file names, creates the lineage from each source table to the corresponding S3 file and from each s3 file to the corresponding snowflake table.
 if new tables or files are added to any connection, the script will import them automatically and build lineage based on object names.
 
-main.py is for local executions.
-lambda_handler.py is deployed to the Lambda service in my AWS personal account along with the pyatlan and boto3 libraries.
+`script_for_local_execution.py` is to run from a laptop.
+`lambda_handler.py` is deployed to the Lambda service in my AWS personal account along with the pyatlan and boto3 libraries.
 
 The entry point of both scripts is the `lambda_handler` function.
 
@@ -36,9 +36,9 @@ Possible improvements:
 - for local executions configure aws cli with credentials that can access s3
 - create a python3 environement variable and activate it. Example: `python3.11 -m venv && source venv/bin/activate`
 - install python dependencies from requirements.txt: `pip install -r requirements.txt`
-- run main.py after adapting the code at the end with the request type to be passed to the lambda_handler function
-- execute with the upsert_s3_connection_request payload first (done only once)
-- execute with upsert_s3_assets_and_lineage payload to import the s3 objects and create the missing lineage
+- run `script_for_local_execution.py` after adapting the code at the end with the request type to be passed to the lambda_handler function
+- execute with the `upsert_s3_connection_request` payload first (done only once)
+- execute with `upsert_s3_assets_and_lineage` payload to import the s3 objects and create the missing lineage
 
 # Examples of all the supported requests
 ```python
