@@ -28,7 +28,7 @@ Possible improvements:
 - use secret manager to store the api key on AWS
 - automate the lambda function and scheduling deployment using terraform
 
-# How to run the code
+# How to run the code locally
 - generate an atlan api key
 - create the following environment variables
     - ATLAN_BASE_URL='https://instance-name.atlan.com'
