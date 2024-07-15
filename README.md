@@ -1,6 +1,6 @@
 # README
-This scipt imports an S3 bucket and its files as Atlan assets, then based on file names, creates the lineage from the each source table to the corresponding S3 file and from each s3 file to the corresponding snowflake table.
-if there new tables or files are added to any connection, the script will import them automatically and build lineage based on object names.
+The aim of the script is to import an S3 bucket and its files as Atlan assets, then based on file names, creates the lineage from each source table to the corresponding S3 file and from each s3 file to the corresponding snowflake table.
+if new tables or files are added to any connection, the script will import them automatically and build lineage based on object names.
 
 main.py is for local executions.
 lambda_handler.py is deployed to the Lambda service in my AWS personal account along with the pyatlan and boto3 libraries.
