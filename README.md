@@ -34,7 +34,8 @@ Possible improvements:
     - ATLAN_BASE_URL='https://instance-name.atlan.com'
     - ATLAN_API_KEY='xxxxxxxxxxxxxxx'
 - for local executions configure aws cli with credentials that can access s3
-- install python dependencies from requirements.txt
+- create a python3 environement variable and activate it. Example: `python3.11 -m venv && source venv/bin/activate`
+- install python dependencies from requirements.txt: `pip install -r requirements.txt`
 - run main.py after adapting the code at the end with the request type to be passed to the lambda_handler function
 - execute with the upsert_s3_connection_request payload first (done only once)
 - execute with upsert_s3_assets_and_lineage payload to import the s3 objects and create the missing lineage
