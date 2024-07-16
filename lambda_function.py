@@ -1,151 +1,20 @@
-import json
-import logging
-
 import boto3
-from pyatlan.cache.role_cache import RoleCache
 from pyatlan.client.atlan import AtlanClient
-from pyatlan.errors import NotFoundError
 from pyatlan.model.assets import (
-    Connection,
-    S3Bucket,
     S3Object,
-    Process,
-    Table,
-    Database,
-    Schema,
 )
-from pyatlan.model.enums import AtlanConnectorType
 
-logger = logging.getLogger()
-if len(logging.getLogger().handlers) > 0:
-    # if code is executed within a lambda
-    logger.setLevel(logging.INFO)
-else:
-    # if code is executed locally
-    logging.basicConfig(level=logging.INFO)
-
-ASSET_TYPES = {
-    "Connection": Connection,
-    "S3Bucket": S3Bucket,
-    "S3Object": S3Object,
-    "Process": Process,
-    "Database": Database,
-    "Schema": Schema,
-    "Table": Table,
-}
-
-S3_CONNECTION_NAME = "aws-s3-connection-mag"
-ASSETS_OWNER = "mag.i"
-
-
-def create_or_update_atlan_s3_connection(atlan_client: AtlanClient, qualified_name):
-    admin_role_guid = RoleCache.get_id_for_name("$admin")
-    s3_connection = Connection.creator(
-        name=S3_CONNECTION_NAME,
-        connector_type=AtlanConnectorType.S3,
-        admin_roles=[admin_role_guid],
-    )
-    s3_connection.qualified_name = qualified_name
-    response = atlan_client.asset.save(s3_connection)
-    connection_guid = list(response.guid_assignments.values())[0]
-    return connection_guid
-
-
-def create_or_update_atlan_s3_bucket(
-    atlan_client,
-    connection_qualified_name,
-    bucket_qualified_name,
-    bucket_name,
-    bucket_aws_arn,
-    bucket_object_count,
-):
-    s3bucket = S3Bucket.creator(
-        name=bucket_name,
-        connection_qualified_name=connection_qualified_name,
-        aws_arn=bucket_aws_arn,
-    )
-    s3bucket.qualified_name = bucket_qualified_name
-    s3bucket.s3_object_count = bucket_object_count
-    s3bucket.owner_users = [ASSETS_OWNER]
-    response = atlan_client.asset.save(s3bucket)
-    bucket_guid = list(response.guid_assignments.values())[0]
-    return bucket_guid
-
-
-def create_or_update_atlan_s3_object(
-    atlan_client,
-    connection_qualified_name,
-    bucket_qualified_name,
-    s3_object_qualified_name,
-    s3_object_name,
-    s3_object_aws_arn,
-):
-    s3_object = S3Object.creator(
-        name=s3_object_name,
-        connection_qualified_name=connection_qualified_name,
-        aws_arn=s3_object_aws_arn,
-        s3_bucket_qualified_name=bucket_qualified_name,
-    )
-    s3_object.qualified_name = s3_object_qualified_name
-    s3_object.owner_users = [ASSETS_OWNER]
-    response = atlan_client.asset.save(s3_object)
-    object_guid = list(response.guid_assignments.values())[0]
-    return object_guid
-
-
-def retrieve_atlan_asset_by_qn(atlan_client, qualified_name, asset_type):
-    try:
-        return atlan_client.asset.get_by_qualified_name(
-            asset_type=ASSET_TYPES[asset_type], qualified_name=qualified_name
-        )
-    except NotFoundError:
-        return None
-
-
-def retrieve_atlan_asset_by_guid(atlan_client, guid, asset_type):
-    try:
-        return atlan_client.asset.get_by_guid(
-            asset_type=ASSET_TYPES[asset_type], guid=guid
-        )
-    except NotFoundError:
-        return None
-
-
-def purge_atlan_assets(atlan_client, assets_guids):
-    for asset_guid in assets_guids:
-        atlan_client.asset.purge_by_guid(asset_guid)
-
-
-def create_or_update_lineage(
-    atlan_client, process_name, process_id, connection_qualified_name, inputs, outputs
-):
-    atlan_process = Process.creator(
-        name=process_name,
-        connection_qualified_name=connection_qualified_name,
-        process_id=process_id,
-        inputs=inputs,
-        outputs=outputs,
-    )
-    atlan_process.owner_users = [ASSETS_OWNER]
-    response = atlan_client.asset.save(atlan_process)
-    process_guid = list(response.guid_assignments.values())[0]
-    return process_guid
-
-
-def list_s3_bucket_objects(aws_session, bucket_name, s3_prefix=""):
-
-    s3 = aws_session.resource("s3")
-    bucket = s3.Bucket(bucket_name)
-
-    s3_object_list = []
-    for s3_object in bucket.objects.filter(Prefix=s3_prefix):
-        s3_object_list.append(s3_object.key)
-    return s3_object_list
+from atlan_operations import *
+from constants import logger
+from input_validation import validate_input
+from s3_operations import get_s3_bucket_objects_and_table_names
 
 
 def upsert_s3_assets_and_lineage(
     atlan_client,
+    aws_session,
     s3_connection_qualified_name,
+    asset_owners,
     source_connection_qualified_name,
     source_database_schema_qualified_name,
     target_connection_qualified_name,
@@ -157,14 +26,21 @@ def upsert_s3_assets_and_lineage(
     s3_bucket_name,
     s3_bucket_arn,
     qualifier_suffix,
+    s3_bucket_prefix=None,
+    s3_file_name_pattern=None,
+    source_table_pattern=None,
+    target_table_pattern=None,
 ):
-
     s3_bucket_atlan_arn = f"{s3_bucket_arn}-{qualifier_suffix}"
     bucket_qualified_name = f"{s3_connection_qualified_name}/{s3_bucket_atlan_arn}"
 
     logger.info("fetching s3 object names")
-    aws_session = boto3.Session()
-    s3_object_list = list_s3_bucket_objects(aws_session, s3_bucket_name)
+    s3_objects_and_tablenames = get_s3_bucket_objects_and_table_names(
+        aws_session,
+        s3_bucket_name,
+        s3_prefix=s3_bucket_prefix,
+        file_name_regex=s3_file_name_pattern,
+    )
 
     upserted_assets = {
         "s3_bucket_guid": None,
@@ -179,11 +55,13 @@ def upsert_s3_assets_and_lineage(
         bucket_qualified_name=bucket_qualified_name,
         bucket_name=s3_bucket_name,
         bucket_aws_arn=s3_bucket_atlan_arn,
-        bucket_object_count=len(s3_object_list),
+        bucket_object_count=len(s3_objects_and_tablenames),
+        asset_owners=asset_owners
+
     )
 
     logger.info("creating or updating s3 assets and their lineage...")
-    for s3_obj_name in s3_object_list:
+    for s3_obj_name, table_name in s3_objects_and_tablenames:
         s3_object_qualified_name = f"{bucket_qualified_name}/{s3_obj_name}"
         logger.info(f"creating or updating {s3_obj_name} s3 asset...")
         upserted_assets["s3_objects_guids"].append(
@@ -194,17 +72,16 @@ def upsert_s3_assets_and_lineage(
                 s3_object_qualified_name=s3_object_qualified_name,
                 s3_object_name=s3_obj_name,
                 s3_object_aws_arn=f"{s3_bucket_atlan_arn}/{s3_obj_name}",
+                asset_owners=asset_owners
             )
         )
-
-        table_name = s3_obj_name.split(".")[0]
-
-        source_table = retrieve_atlan_asset_by_qn(
-            atlan_client,
-            f"{source_database_schema_qualified_name}/{table_name}",
-            "Table",
+        search_pattern = table_name
+        if source_table_pattern and "{table_name}" in source_table_pattern:
+            search_pattern = source_table_pattern.format(table_name=table_name)
+        source_tables = search_table_in_schema(
+            atlan_client, source_database_schema_qualified_name, search_pattern
         )
-        if source_table is not None:
+        if source_tables:
             logger.info(
                 f"creating or updating source to staging lineage for {table_name}..."
             )
@@ -214,21 +91,23 @@ def upsert_s3_assets_and_lineage(
                     process_name=f"{table_name} {source_extraction_process_name_suffix}",
                     process_id=f"{table_name}_{source_extraction_process_id_suffix}",
                     connection_qualified_name=source_connection_qualified_name,
-                    inputs=[source_table],
+                    inputs=source_tables,
                     outputs=[
                         S3Object.ref_by_qualified_name(
                             qualified_name=s3_object_qualified_name
                         )
                     ],
+                    asset_owners=asset_owners
                 )
             )
 
-        target_table = retrieve_atlan_asset_by_qn(
-            atlan_client,
-            f"{target_database_schema_qualified_name}/{table_name}",
-            "Table",
+        search_pattern = table_name
+        if target_table_pattern and "{table_name}" in target_table_pattern:
+            search_pattern = target_table_pattern.format(table_name=table_name)
+        target_tables = search_table_in_schema(
+            atlan_client, target_database_schema_qualified_name, search_pattern
         )
-        if target_table is not None:
+        if target_tables:
             logger.info(
                 f"creating or updating staging to target lineage for {table_name}..."
             )
@@ -243,120 +122,15 @@ def upsert_s3_assets_and_lineage(
                             qualified_name=s3_object_qualified_name
                         )
                     ],
-                    outputs=[target_table],
+                    outputs=target_tables,
+                    asset_owners=asset_owners
                 )
             )
 
     return upserted_assets
 
 
-class WrongInputException(Exception):
-    pass
-
-
-def validate_parameters(req):
-    operation = req.get("operation")
-    params = req.get("params", {})
-
-    if not (operation and params):
-        raise WrongInputException(Exception)
-
-    if operation == "upsert_s3_connection":
-        connection_qn = params.get("connection_qn")
-        if not connection_qn or not isinstance(connection_qn, str):
-            raise WrongInputException(Exception)
-        return ("upsert_s3_connection", connection_qn)
-
-    if operation == "get_by_guid":
-        guid = params.get("guid")
-        asset_type = params.get("asset_type")
-        if not guid or not isinstance(guid, str) or asset_type not in ASSET_TYPES:
-            raise WrongInputException(Exception)
-        return ("get_by_guid", (guid, asset_type))
-
-    elif operation == "get_by_qn":
-        qualified_name = params.get("qualified_name")
-        asset_type = params.get("asset_type")
-        if (
-            not qualified_name
-            or not isinstance(qualified_name, str)
-            or asset_type not in ASSET_TYPES
-        ):
-            raise WrongInputException(Exception)
-        return ("get_by_qn", (qualified_name, asset_type))
-
-    elif operation == "purge":
-        assets_guids = params.get("assets_guids")
-        if not assets_guids or not isinstance(assets_guids, list):
-            raise WrongInputException(Exception)
-        return ("purge", assets_guids)
-
-    elif operation == "upsert_s3_assets_and_lineage":
-        s3_connection_qualified_name = params.get("s3_connection_qualified_name")
-        source_connection_qualified_name = params.get(
-            "source_connection_qualified_name"
-        )
-        source_database_schema_qualified_name = params.get(
-            "source_database_schema_qualified_name"
-        )
-        target_connection_qualified_name = params.get(
-            "target_connection_qualified_name"
-        )
-        target_database_schema_qualified_name = params.get(
-            "target_database_schema_qualified_name"
-        )
-        source_extraction_process_name_suffix = params.get(
-            "source_extraction_process_name_suffix"
-        )
-        source_extraction_process_id_suffix = params.get(
-            "source_extraction_process_id_suffix"
-        )
-        target_import_process_name_suffix = params.get(
-            "target_import_process_name_suffix"
-        )
-        target_import_process_id_suffix = params.get("target_import_process_id_suffix")
-        s3_bucket_name = params.get("s3_bucket_name")
-        s3_bucket_arn = params.get("s3_bucket_arn")
-        qualifier_suffix = params.get("qualifier_suffix")
-
-        if not (
-            s3_connection_qualified_name
-            and source_connection_qualified_name
-            and source_database_schema_qualified_name
-            and target_connection_qualified_name
-            and target_database_schema_qualified_name
-            and source_extraction_process_name_suffix
-            and source_extraction_process_id_suffix
-            and target_import_process_name_suffix
-            and target_import_process_id_suffix
-            and s3_bucket_name
-            and s3_bucket_arn
-            and qualifier_suffix
-        ):
-            raise WrongInputException("wrong payload schema")
-        else:
-            return (
-                "upsert_s3_assets_and_lineage",
-                (
-                    s3_connection_qualified_name,
-                    source_connection_qualified_name,
-                    source_database_schema_qualified_name,
-                    target_connection_qualified_name,
-                    target_database_schema_qualified_name,
-                    source_extraction_process_name_suffix,
-                    source_extraction_process_id_suffix,
-                    target_import_process_name_suffix,
-                    target_import_process_id_suffix,
-                    s3_bucket_name,
-                    s3_bucket_arn,
-                    qualifier_suffix,
-                ),
-            )
-    else:
-        raise WrongInputException()
-
-
-def list_or_none(set_):
+def set_to_list(set_):
     if set_ and isinstance(set_, set):
         return list(set_)
     return None
@@ -365,51 +139,56 @@ def list_or_none(set_):
 def lambda_handler(req, context):
 
     logger.info("validating parameters...")
-    operation, params = validate_parameters(req)
+    input = validate_input(req)
+    operation = input.operation
+    params = input.params
 
-    logger.info("creating atlan api client...")
+    logger.info("creating api clients...")
+    aws_session = boto3.Session()
     atlan_client = AtlanClient()
 
     result = {"operation": operation}
 
     if operation == "upsert_s3_connection":
-        qualified_name = params
         s3_connection_guid = create_or_update_atlan_s3_connection(
-            atlan_client, qualified_name
+            atlan_client, params.connection_name, params.connection_qn
         )
         result["s3_connection_guid"] = s3_connection_guid
 
     if operation == "upsert_s3_assets_and_lineage":
-        upserted_assets = upsert_s3_assets_and_lineage(atlan_client, *params)
+        upserted_assets = upsert_s3_assets_and_lineage(
+            atlan_client, aws_session, **params.model_dump()
+        )
         result["upserted_assets"] = upserted_assets
 
     if operation == "get_by_guid":
-        guid, asset_type = params
-        asset = retrieve_atlan_asset_by_guid(atlan_client, guid, asset_type)
+        asset = retrieve_atlan_asset_by_guid(
+            atlan_client, params.guid, params.asset_type
+        )
         result["asset_info"] = {
             "guid": asset.guid,
             "qualified_name": asset.qualified_name,
-            "owners": list_or_none(asset.owner_users),
-            "owner_groups": list_or_none(asset.owner_groups),
-            "tags": list_or_none(asset.asset_tags),
+            "owners": set_to_list(asset.owner_users),
+            "owner_groups": set_to_list(asset.owner_groups),
+            "tags": set_to_list(asset.asset_tags),
             "update_time": asset.update_time,
         }
 
     if operation == "get_by_qn":
-        qualified_name, asset_type = params
-        asset = retrieve_atlan_asset_by_qn(atlan_client, qualified_name, asset_type)
+        asset = retrieve_atlan_asset_by_qn(
+            atlan_client, params.qualified_name, params.asset_type
+        )
         result["asset_info"] = {
             "guid": asset.guid,
             "qualified_name": asset.qualified_name,
-            "owners": list_or_none(asset.owner_users),
-            "owner_groups": list_or_none(asset.owner_groups),
-            "tags": list_or_none(asset.asset_tags),
+            "owners": set_to_list(asset.owner_users),
+            "owner_groups": set_to_list(asset.owner_groups),
+            "tags": set_to_list(asset.asset_tags),
             "update_time": asset.update_time,
         }
 
     if operation == "purge":
-        assets_guids = params
-        purge_atlan_assets(atlan_client, assets_guids)
-        result["purged_assets"] = assets_guids
+        purge_atlan_assets(atlan_client, params.assets_guids)
+        result["purged_assets"] = [str(guid) for guid in params.assets_guids]
 
     return {"statusCode": 200, "body": result}
